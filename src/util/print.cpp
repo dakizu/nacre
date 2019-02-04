@@ -1,3 +1,4 @@
+#include <buildpch.h>
 #include "print.h"
 
 void print(const char* string)
