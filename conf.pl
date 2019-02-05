@@ -9,6 +9,8 @@ our @src_files = (
     'thirdparty/glad.c'
 );
 
+our $compdb = 1;
+
 our @pch = (
     'buildpch.h'
 );
@@ -38,12 +40,15 @@ our %platform_dep;
 $platform_dep{'msys'} = sub {
     push @flags, '-isystem C:/msys64/mingw64/include';
 };
+$platform_dep{'MSWin32'} = sub {
+    push @flags, '-isystem C:/msys64/mingw64/include';
+};
 $platform_dep{'linux'} = sub {
     push @flags_linker, '-ldl';
 };
 
 our %std;
-$std{'CC'} = 'gnu17';
+$std{'CC'} = 'gnu11';
 $std{'CXX'} = 'gnu++17';
 
 # idea (not yet implemented)
@@ -52,7 +57,3 @@ $std{'CXX'} = 'gnu++17';
 our @dll_copy = (
     'test.dll'
 );
-
-# important! - add support for precompiled headers (ideally with both gcc and clang)
-
-# another thing: add compile_commands.json generation
