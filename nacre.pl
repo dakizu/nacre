@@ -1,4 +1,13 @@
 #!/usr/bin/env perl
+
+############################################################
+#################### NACRE BUILD SYSTEM ####################
+############################################################
+
+#############################################################
+#################### START: Dependencies ####################
+#############################################################
+
 use strict;
 use warnings;
 use Term::ANSIColor qw(:constants);
@@ -6,16 +15,31 @@ use File::Path;
 use File::Path qw/make_path/;
 use File::Basename;
 use IPC::Open3;
+use JSON::MaybeXS ':all'; # external dependency
+use Cwd qw(cwd);
 
-require "./compdb.pl"; # compilation database generator
+###########################################################
+#################### END: Dependencies ####################
+###########################################################
+
+#######################################################################
+#################### START: Architecture detection ####################
+#######################################################################
 
 my $arch;
 for (`perl -V:archname`) {
-	$arch = (/x86_64/) ? 64 : 32;
+	$arch = (/x86_64|x64/) ? 64 : 32;
 }
 
-my $conf_file = 'conf.pl'; # name of user config file
+#####################################################################
+#################### END: Architecture detection ####################
+#####################################################################
 
+#################################################################
+#################### START: Config variables ####################
+#################################################################
+
+my $conf_file = 'conf.pl'; # name of user config file
 unless (-f $conf_file) {
 	print RED, "Could not find conf.pl!\n", RESET;
 	exit;
@@ -37,8 +61,7 @@ our %platform_dep; # a map of function pointers for platform dependent operation
 our %arch_dep; # a map of function pointers for architecture dependent operations
 our %std; # a map of standards to use for C and C++ compilation
 our $compdb = 0; # flag that enables the generation of a compilation database (compile_commands.json)
-
-our %color;
+our %color; # colors to use for build system output
 $color{'head'} = BRIGHT_MAGENTA;
 $color{'body'} = WHITE;
 $color{'success'} = BRIGHT_GREEN;
@@ -47,27 +70,49 @@ $color{'special'} = BRIGHT_CYAN;
 
 require "./$conf_file"; # user config file
 
+###############################################################
+#################### END: Config variables ####################
+###############################################################
+
+#################################################################
+#################### START: Global variables ####################
+#################################################################
+
 my $std_flag_cc = '';
 my $std_flag_cxx = '';
-
 my @obj_files;
+
+###############################################################
+#################### END: Global variables ####################
+###############################################################
+
+#################################################################
+#################### START: Helper functions ####################
+#################################################################
 
 sub create_path {
 	my $dir = dirname("$_[0]");
 	make_path ($dir);
 }
 
+###############################################################
+#################### END: Helper functions ####################
+###############################################################
+
+####################################################################
+#################### START: Build file cleaning ####################
+####################################################################
+
 sub clean {
 	my $dirty = 0;
 	if (-d 'build') {
-	rmtree('build');
-	print GREEN, "Cleaned build files!\n", RESET;
-	$dirty = $dirty + 1;
+		rmtree('build');
+		print GREEN, "Cleaned build files!\n", RESET;
+		$dirty = $dirty + 1;
 	}
 	if (-f 'compile_commands.json') {
-	unlink 'compile_commands.json';
-	print $color{'success'}, "Removed compile commands file!\n", RESET;
-	$dirty = $dirty + 1;
+		unlink 'compile_commands.json';
+		$dirty = $dirty + 1;
 	}
 	if ($dirty == 0)
 	{
@@ -76,6 +121,14 @@ sub clean {
 	mkdir 'build';
 	return;
 }
+
+##################################################################
+#################### END: Build file cleaning ####################
+##################################################################
+
+####################################################################
+#################### START: Executable shortcut ####################
+####################################################################
 
 sub run {
 	if (-f "build/$bin") {
@@ -90,6 +143,14 @@ sub run {
 	return;
 }
 
+##################################################################
+#################### END: Executable shortcut ####################
+##################################################################
+
+##############################################################
+#################### START: Build process ####################
+##############################################################
+
 sub build {
 
 	my @head = ($color{'head'}, "[$^O x$arch]", RESET);
@@ -99,7 +160,7 @@ sub build {
 	unless (-d "./build/meta") { mkdir "./build/meta"; }
 	unless (-d "./build/pchi") { mkdir "./build/pchi"; }
 
-	print @head, $color{'body'}, " Compiling...\n", RESET;
+	print @head, $color{'body'}, " Building project...\n", RESET;
 
 	my @head_custom = ($color{'head'}, "($conf_file)", RESET);
 
@@ -139,57 +200,63 @@ sub build {
 		}
 	}
 
-	# precompile headers
+	########## SECTION: Precompile headers ##########
 	if (scalar @pch != 0) {
-	print @head, $color{'body'}, " Precompiling headers...\n", RESET;
+		print @head, $color{'body'}, " Precompiling headers...\n", RESET;
 
-	my @head_pch = ($color{'head'}, "(pch)", RESET);
+		my @head_pch = ($color{'head'}, "(pch)", RESET);
 
-	foreach (@pch) {
-		my $comp = $CXX;
-		my $input = "src/$_";
-		my $output = "build/pchi/$_";
-		my $fake_out = "build/pchi/$_"; # only required by GCC, consider putting inside GCC specific code
-		if ($CXX =~ /g++/ || $CXX =~ /gcc/) {
-		$output = "$output.gch";
-		}
-		elsif ($CXX =~ /clang/) {
-		$output = "$output.pch";
-		}
-		if ($output !~ /.h/) {
-		print @head_pch, $color{'body'}, " Non-standard file extension! ($_)\n", RESET;
-		}
+		foreach (@pch) {
+			my $comp = $CXX;
+			my $input = "src/$_";
+			my $output = "build/pchi/$_";
+			my $fake_out = "build/pchi/$_"; # only required by GCC, consider putting inside GCC specific code
+			if ($CXX =~ /g++/ || $CXX =~ /gcc/) {
+				$output = "$output.gch";
+			}
+			elsif ($CXX =~ /clang/) {
+				$output = "$output.pch";
+			}
+			if ($output !~ /.h/) {
+				print @head_pch, $color{'body'}, " Non-standard file extension! ($_)\n", RESET;
+			}
 
-		# freeze header precompilation if in frozen list?
-		print @head_pch, $color{'body'}, " $input -> $output", RESET;
-		create_path "$output";
-		open my $fh, '>', "$fake_out";
-		print $fh "// fake header for $output\n// required for gcc compatibility\n#error \"fake header executed: <$fake_out>\"\n";
-		close $fh;
-		my $in_build_str = "$comp @pch_flags $std_flag_cxx $include_str @flags @flags_compiler -o $output $input";
-		my $build_out = `$in_build_str 2>&1`;
+			# freeze header precompilation if in frozen list?
+			print @head_pch, $color{'body'}, " $input -> $output", RESET;
 
-		if ($? == 0) {
-		print $color{'success'}, " (success)\n", RESET;
-		if ($build_out ne "") {
-			if ($pch_warn == 1) {
-			print "$build_out";
+			if (-f $output) {
+				print $color{'special'}, " (good)\n", RESET;
+				next;
+			}
+
+			create_path "$output";
+			open my $fh, '>', "$fake_out";
+			print $fh "// fake header for $output\n// required for gcc compatibility\n#error \"fake header executed: <$fake_out>\"\n";
+			close $fh;
+			my $in_build_str = "$comp @pch_flags $std_flag_cxx $include_str @flags @flags_compiler -o $output $input";
+			my $build_out = `$in_build_str 2>&1`;
+
+			if ($? == 0) {
+				print $color{'success'}, " (success)\n", RESET;
+				if ($build_out ne "") {
+					if ($pch_warn == 1) {
+						print "$build_out";
+					}
+				}
+			}
+			else {
+				print $color{'failure'}, " (fail)\n", RESET;
+				print @head_pch, $color{'failure'}, " Header compilation failed!\n", RESET;
+				print "$build_out\n";
+				return; # move on to the next header/skip to the compilation?
 			}
 		}
-		}
-		else {
-		print $color{'failure'}, " (fail)\n", RESET;
-		print @head_pch, $color{'failure'}, " Header compilation failed!\n", RESET;
-		print "$build_out\n";
-		return; # move on to the next header/skip to the compilation?
-		}
-	}
 	}
 
 
 	compdb_reset();
 
-	# compile source into object files
+	########## SECTION: Compile source ##########
 	print @head, $color{'body'}, " Compiling source...\n", RESET;
 	foreach (@src_files) {
 		my $frozen = 0;
@@ -252,14 +319,26 @@ sub build {
 		push @obj_files, $final;
 	}
 
-	# link object files
+	########## SECTION: Link object files ##########
 	my $obj_string = '';
 	foreach (@obj_files) {
 		$obj_string = "$obj_string $_";
 	}
-	print @head, $color{'body'}, " Linking...\n", RESET;
+	print @head, $color{'body'}, " Linking...", RESET;
 	my $build_str = "$CXX $std_flag_cxx @flags @flags_linker $obj_string -o build/$bin";
-	system($build_str); ##### TODO: CHANGE LINKING TO USE SAME NICE PRINTING AS COMPILATION
+	my $build_out = `$build_str 2>&1`;
+	if ($? == 0) {
+		print $color{'success'}, " (success)\n", RESET;
+		if ($build_out ne "") {
+			print "$build_out";
+		}
+	}
+	else {
+		print $color{'failure'}, " (fail)\n", RESET;
+		print @head, $color{'failure'}, " Linking failed!\n", RESET;
+		print "$build_out\n";
+		return;
+	}
 
 	if ($compdb == 1) {
 		compdb_serialize();
@@ -269,10 +348,18 @@ sub build {
 		close $cdbfh;
 	}
 
-	print @head, $color{'success'}, " Building finished!\n", RESET;
+	print @head, $color{'success'}, " Building completed!\n", RESET;
+
 	return;
 }
 
+############################################################
+#################### END: Build process ####################
+############################################################
+
+##############################################################
+#################### START: Program entry ####################
+##############################################################
 
 my $arg = (@ARGV < 1) ? "" : $ARGV[0];
 ($arg eq 'build') ? build :
@@ -280,9 +367,13 @@ my $arg = (@ARGV < 1) ? "" : $ARGV[0];
 ($arg eq 'clean') ? clean :
 build;
 
+############################################################
+#################### END: Program entry ####################
+############################################################
 
-
-# hell below
+##################################################################
+#################### START: Standard handling ####################
+##################################################################
 
 sub handle_std {
 	if (exists $std{'CC'}) {
@@ -348,3 +439,81 @@ sub handle_std {
 		}
 	}
 }
+
+################################################################
+#################### END: Standard handling ####################
+################################################################
+
+################################################################################
+#################### START: Compilation database generation ####################
+################################################################################
+
+my @db; # json object (data)
+my $json; # json object (text)
+
+# all compile_commands.json entries
+# the below should all be of identical size
+my @directory;
+my @file;
+my @command;
+#my @arguments; # command used instead
+my @output;
+
+# doesn't take input
+sub compdb_export {
+	$json = encode_json \@db;
+	#$json =~ s.\\\/.\/.g;
+	return $json;
+}
+
+# takes the compile command string
+sub compdb_add {
+	my $string = $_[0];
+	my @tokens = split ' ', $string;
+
+	# build directory string
+	push @directory, cwd;
+
+	# build file string
+	push @file, $tokens[-1];
+
+	# build command string
+	push @command, $string;
+
+	# build output string
+	foreach my $n (0 .. scalar @tokens) {
+		if ($tokens[$n] eq '-o') {
+			push @output, $tokens[$n+1];
+			last;
+		}
+	}
+	return;
+}
+
+# doesn't take input
+sub compdb_serialize {
+	foreach my $n (0 .. scalar @directory - 1) {
+		my %entry = (
+			directory => $directory[$n],
+			file => $file[$n],
+			command => $command[$n],
+			output => $output[$n]
+		);
+		push @db, \%entry;
+	}
+	compdb_reset();
+	return;
+}
+
+# doesn't take input
+sub compdb_reset {
+	@directory = ();
+	@file = ();
+	@command = ();
+	@output = ();
+	return;
+}
+
+##############################################################################
+#################### END: Compilation database generation ####################
+##############################################################################
