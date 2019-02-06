@@ -36,6 +36,8 @@ our @include = (
     './src'
 );
 
+our $dlink = 1;
+
 our %dep;
 $dep{msys} = sub {
     push @flags, '-isystem C:/msys64/mingw64/include';

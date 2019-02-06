@@ -58,6 +58,7 @@ our $pch_warn = 0; # flag that enables warnings for header compilation
 our $bin = 'out'; # the binary (executable) to be produced
 our $CC = 'gcc'; # the C compiler
 our $CXX = 'g++'; # the C++ compiler (this will also be used for linking)
+our $dlink = 0; # flag that enables linking all dynamic library files in bin folder to the exec at runtime (only supports linux environments)
 our %dep; # platform and architecture dependent code
 our %std; # a map of standards to use for C and C++ compilation
 our $compdb = 0; # flag that enables the generation of a compilation database (compile_commands.json)
@@ -131,16 +132,29 @@ sub clean {
 ####################################################################
 
 sub run {
-	if (-f "build/$bin") {
-		print $color{'success'}, "Running program...\n", RESET;
-		exec "./build/$bin";
-	}
-	elsif (-f "build/$bin.exe") {
-		print $color{'success'}, "Running program...\n", RESET;
-		exec "./build/$bin.exe";
-	}
+    my $exstr = '';
+    if (-f "build/$bin") {
+	$exstr = "./build/$bin";
+    }
+    elsif (-f "build/$bin.exe") {
+
+	$exstr = "./build/$bin.exe";
+    }
+    if ($exstr eq '') {
 	print $color{'failure'}, "Executable not found!\n", RESET;
 	return;
+    }
+    if ($dlink == 1) {
+	if ($platform eq 'linux' || $platform eq 'msys') {
+	    my @extok = ('export PATH="$PATH:', cwd(), '/bin";', "$exstr");
+	    $exstr = "(@extok)";
+	    $exstr =~ s/ \/bin/\/bin/;
+	    $exstr =~ s/PATH: /PATH:/;
+	}
+    }
+
+    print $color{'success'}, "Running program...\n", RESET;
+    exec "$exstr";
 }
 
 ##################################################################
