@@ -36,15 +36,18 @@ our @include = (
     './src'
 );
 
-our %platform_dep;
-$platform_dep{'msys'} = sub {
+our %dep;
+$dep{msys} = sub {
     push @flags, '-isystem C:/msys64/mingw64/include';
 };
-$platform_dep{'MSWin32'} = sub {
+$dep{MSWin32} = sub {
     push @flags, '-isystem C:/msys64/mingw64/include';
 };
-$platform_dep{'linux'} = sub {
+$dep{linux} = sub {
     push @flags_linker, '-ldl';
+};
+$dep{linux_x64} = sub {
+
 };
 
 our %std;

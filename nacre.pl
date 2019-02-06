@@ -10,13 +10,13 @@
 
 use strict;
 use warnings;
-use Term::ANSIColor qw(:constants);
+use Term::ANSIColor qw(:constants); # output colors
 use File::Path;
-use File::Path qw/make_path/;
-use File::Basename;
-use IPC::Open3;
-use JSON::MaybeXS ':all'; # external dependency
-use Cwd qw(cwd);
+use File::Path qw/make_path/; # path generation (used for gcc pch)
+use File::Basename; # path generation (used for gcc pch)
+use JSON::MaybeXS ':all'; # json conversion (used for compilation database generation)
+use Cwd qw(cwd); # get execution directory (used for compilation database generation)
+use Config; # get machine configuration (used for architecture detection)
 
 ###########################################################
 #################### END: Dependencies ####################
@@ -27,9 +27,10 @@ use Cwd qw(cwd);
 #######################################################################
 
 my $arch;
-for (`perl -V:archname`) {
+for ($Config{archname}) {
 	$arch = (/x86_64|x64/) ? 64 : 32;
 }
+my $platform = $^O;
 
 #####################################################################
 #################### END: Architecture detection ####################
@@ -57,8 +58,7 @@ our $pch_warn = 0; # flag that enables warnings for header compilation
 our $bin = 'out'; # the binary (executable) to be produced
 our $CC = 'gcc'; # the C compiler
 our $CXX = 'g++'; # the C++ compiler (this will also be used for linking)
-our %platform_dep; # a map of function pointers for platform dependent operations
-our %arch_dep; # a map of function pointers for architecture dependent operations
+our %dep; # platform and architecture dependent code
 our %std; # a map of standards to use for C and C++ compilation
 our $compdb = 0; # flag that enables the generation of a compilation database (compile_commands.json)
 our %color; # colors to use for build system output
@@ -153,7 +153,7 @@ sub run {
 
 sub build {
 
-	my @head = ($color{'head'}, "[$^O x$arch]", RESET);
+	my @head = ($color{'head'}, "[$platform x$arch]", RESET);
 
 	unless (-d "./build") { mkdir "./build"; }
 	unless (-d "./build/obj") { mkdir "./build/obj"; }
@@ -164,30 +164,37 @@ sub build {
 
 	my @head_custom = ($color{'head'}, "($conf_file)", RESET);
 
-	keys %platform_dep;
-	while(my($k, $v) = each %platform_dep) {
-	if ($^O eq $k) {
-		print @head_custom, $color{'special'}, " Executing custom platform code for $^O...\n", RESET;
+	keys %dep;
+	while(my($k, $v) = each %dep) {
+	    if ($platform eq $k) {
+		print @head_custom, $color{'special'}, " Executing custom platform code for $platform...\n", RESET;
 		$v->();
-	}
+	    }
 	}
 
 	if ($arch == 64) {
-	if (exists $arch_dep{64}) {
+	    if (exists $dep{64}) {
 		print @head_custom, $color{'special'}, " Executing custom architecture code for x86_64...\n", RESET;
-		$arch_dep{64}->();
-	}
+		$dep{64}->();
+	    }
 	}
 	elsif ($arch == 32) {
-	if (exists $arch_dep{32}) {
+	    if (exists $dep{32}) {
 		print @head_custom, $color{'special'}, " Executing custom architecture code for i386...\n", RESET;
-		$arch_dep{32}->();
+		$dep{32}->();
+	    }
 	}
+
+	while (my($k, $v) = each %dep) {
+	    if ($k eq "${platform}_x$arch") {
+		print @head_custom, $color{'special'}, " Executing custom platform/arch code for ${platform}_x$arch...\n", RESET;
+		$v->();
+	    }
 	}
 
 
 	if (scalar @pch != 0) {
-	unshift @include, "./build/pchi"; # DO NOT INCLUDE THIS IN compile_commands.json
+	    unshift @include, "./build/pchi"; # DO NOT INCLUDE THIS IN compile_commands.json
 	}
 
 	handle_std();
