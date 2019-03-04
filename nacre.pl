@@ -42,26 +42,28 @@ my $platform = $^O;
 
 my $conf_file = 'conf.pl'; # name of user config file
 unless (-f $conf_file) {
-	print RED, "Could not find conf.pl!\n", RESET;
+	print RED, "Could not find $conf_file!\n", RESET;
 	exit;
 }
 
 our @src_files; # source files to be compiled and linked
 our @src_freeze; # frozen files to only compile once and always link
-our @flags; # flags for both compilation and linkin
+our @flags; # flags for both compilation and linking
 our @flags_compiler; # flags for only the compilation
 our @flags_linker; # flags for only the linking
 our @include; # directories to be included in compilation (preprocessor)
 our @pch; # header files to be precompiled /// NOTE: Precompiled headers currently only work in GCC. TODO: Clang implementation
 our @pch_flags; # flags for pch compilation
+our @find; # library names for packages with find_*.pl files
+our $find_dir = '/usr/share/nacre'; # directory containing find_*.pl files
 our $pch_warn = 0; # flag that enables warnings for header compilation
 our $bin = 'out'; # the binary (executable) to be produced
 our $CC = 'gcc'; # the C compiler
 our $CXX = 'g++'; # the C++ compiler (this will also be used for linking)
 our $dlink = 0; # flag that enables linking all dynamic library files in bin folder to the exec at runtime (only supports linux environments)
+our $compdb = 0; # flag that enables the generation of a compilation database (compile_commands.json)
 our %dep; # platform and architecture dependent code
 our %std; # a map of standards to use for C and C++ compilation
-our $compdb = 0; # flag that enables the generation of a compilation database (compile_commands.json)
 our %color; # colors to use for build system output
 $color{'head'} = BRIGHT_MAGENTA;
 $color{'body'} = WHITE;
@@ -178,6 +180,8 @@ sub build {
 
 	my @head_custom = ($color{'head'}, "($conf_file)", RESET);
 
+	find_lib();
+	
 	keys %dep;
 	while(my($k, $v) = each %dep) {
 	    if ($platform eq $k) {
@@ -309,7 +313,8 @@ sub build {
 
 		my $std_flag = ($comp eq $CXX) ? $std_flag_cxx : $std_flag_cc;
 		my $in_build_str = "$comp $std_flag $include_str @flags @flags_compiler -c -o $final $file";
-
+		$in_build_str =~ s.\n. .g;
+		
 		if ($frozen == 1) {
 			if (-f $final ) {
 				print @head_comp, $color{'body'}, " $file -> $final", $color{'special'}, " (frozen)\n", RESET;
@@ -347,6 +352,7 @@ sub build {
 	}
 	print @head, $color{'body'}, " Linking...", RESET;
 	my $build_str = "$CXX $std_flag_cxx @flags @flags_linker $obj_string -o build/$bin";
+	$build_str =~ s.\n. .g;
 	my $build_out = `$build_str 2>&1`;
 	if ($? == 0) {
 		print $color{'success'}, " (success)\n", RESET;
@@ -538,3 +544,62 @@ sub compdb_reset {
 ##############################################################################
 #################### END: Compilation database generation ####################
 ##############################################################################
+
+####################################################################
+#################### START: Find library system ####################
+####################################################################
+
+sub find_lib {
+	if (scalar @find == 0) { return; }
+	foreach (@find) {
+		#print "\n\n$_\n\n";
+		find_lib_search ($_);
+	}
+}
+
+sub find_lib_search {
+
+	my @f_file_tokens = split ' ', $_;
+	(my $f_file_name, my @f_file_args) = @f_file_tokens;
+
+	#print "\n\nname: $f_file_name\nargs: @f_file_args\n";
+	
+	my $f_file = "$find_dir/find_$f_file_name.pl";
+	unless (-f $f_file) {
+		print $color{head}, "(find) ", $color{failure}, "Find-file for library $f_file_name not found!\n",RESET;
+		exit;
+	}
+	
+	local our @f_flags;
+	local our @f_flags_compiler;
+	local our @f_flags_linker;
+	local our @f_include;
+	local our %f_dep;
+	local our @f_req;
+
+	{
+		local @_ = @f_file_args;
+		require $f_file;
+	}
+	#print "\n\n" + scalar @f_req + "\n\n";
+	if (scalar @f_req != 0) {
+		foreach (@f_req) {
+			find_lib_search($_);
+		}	
+	}
+
+	print $color{head}, "(find) ", $color{special}, "Finding $f_file_name...";
+	
+	# TODO: execute f_dep dependency code here
+	
+	push @flags, @f_flags;
+	push @flags_compiler, @f_flags_compiler;
+	push @flags_linker, @f_flags_linker;
+	push @include, @f_include;
+	print $color{success}, " (success)\n", RESET;
+}
+
+##################################################################
+#################### END: Find library system ####################
+##################################################################
+
