@@ -50,6 +50,7 @@ unless (-f $conf_file) {
 }
 
 our @src_files; # source files to be compiled and linked
+our @src_dirs; # directories to use for src_files searching and automatic indexing
 our @src_freeze; # frozen files to only compile once and always link
 our @flags; # flags for both compilation and linking
 our @flags_compiler; # flags for only the compilation
@@ -66,6 +67,8 @@ our $CXX = 'g++'; # the C++ compiler (this will also be used for linking)
 our $dlink = 0; # flag that enables linking all dynamic library files in bin folder to the exec at runtime (only supports linux environments)
 our $compdb = 0; # flag that enables the generation of a compilation database (compile_commands.json)
 our $src_index = 2; # automatically index source files
+our $link_dl; # flag that links to the dynamic linking library
+our $include_src = 1; # flag that sets whether or not to include the source directory during compilation
 our %dep; # platform and architecture dependent code
 our %std; # a map of standards to use for C and C++ compilation
 our %color; # colors to use for build system output
@@ -75,11 +78,32 @@ $color{'success'} = BRIGHT_GREEN;
 $color{'failure'} = BRIGHT_RED;
 $color{'special'} = BRIGHT_CYAN;
 
+if ($platform eq 'linux') {
+	$link_dl = 1;
+} else {
+	$link_dl = 0;
+}
+
+if (-d 'src') {
+	push @src_dirs, './src';
+}
 
 require "./$conf_file"; # user config file
 
+if (scalar @src_dirs == 0) {
+	push @src_dirs, '.';
+}
+
 if (scalar @src_files != 0 and $src_index == 2) {
 	$src_index = 0;
+}
+
+if ($link_dl == 1) {
+	push @flags_linker, '-ldl';
+}
+
+if ($include_src == 1) {
+	push @include, 'src';
 }
 
 ###############################################################
@@ -121,7 +145,20 @@ sub file_new_mod {
 }
 
 sub touch_stamp {
-	system "touch ./build/meta/stamp"
+	system "touch ./build/meta/stamp";
+}
+
+sub reset_stamp {
+	#system "touch -t 0 ./build/meta/stamp";
+	# workaround for now
+	if (-d './build/obj') {
+		system "rm -rf ./build/obj";
+		mkdir './build/obj';
+	}
+	if (-d './build/pchi') {
+		system "rm -rf ./build/pchi";
+		mkdir './build/pchi';
+	}
 }
 
 sub touch_file {
@@ -272,18 +309,25 @@ sub build {
 	if (scalar @pch != 0) {
 		print @head, $color{'body'}, " Precompiling headers...\n", RESET;
 
-		my @head_pch = ($color{'head'}, "(pch)", RESET);
+		my @head_pch = ($color{'head'}, "($CXX pch)", RESET);
 
+		my $gcc = 0;
+		my $clang = 0;
+
+		my @clang_out;
+		
 		foreach (@pch) {
 			my $comp = $CXX;
 			my $input = "src/$_";
 			my $output = "build/pchi/$_";
 			my $fake_out = "build/pchi/$_"; # only required by GCC, consider putting inside GCC specific code
-			if ($CXX =~ /g++/ || $CXX =~ /gcc/) {
+			if ($CXX eq 'g++' || $CXX eq 'gcc') {
 				$output = "$output.gch";
+				$gcc = 1;
 			}
-			elsif ($CXX =~ /clang/) {
+			elsif ($CXX eq 'clang' || $CXX eq 'clang++') {
 				$output = "$output.pch";
+				$clang = 1;
 			}
 			if ($output !~ /.h/) {
 				print @head_pch, $color{'body'}, " Non-standard file extension! ($_)\n", RESET;
@@ -303,11 +347,20 @@ sub build {
 					next;
 				}
 			}
-
 			create_path "$output";
-			open my $fh, '>', "$fake_out";
-			print $fh "// fake header for $output\n// required for gcc compatibility\n#error \"fake header executed: <$fake_out>\"\n";
-			close $fh;
+			
+			if ($gcc == 1) {
+				open my $fh, '>', "$fake_out";
+				print $fh "// Fake header for $output\n// Required for GCC compatibility\n#error \"fake header executed: <$fake_out>\"\n";
+				close $fh;
+			}
+
+			if ($clang == 1) {
+				push @pch_flags, ('-emit-pch');
+				#push @flags_compiler, ('-cc1');
+				push @clang_out, $output;
+			}
+			
 			my $in_build_str = "$comp @pch_flags $std_flag_cxx $include_str @flags @flags_compiler -o $output $input";
 			my $build_out = `$in_build_str 2>&1`;
 
@@ -326,6 +379,14 @@ sub build {
 				return; # move on to the next header/skip to the compilation?
 			}
 		}
+
+		if ($clang == 1) {
+			# doesnt work for some reason
+			for my $out_file (@clang_out) {
+				push @flags_compiler, ("-include-pch $out_file");
+			}
+		}
+		
 	}
 
 
@@ -442,6 +503,11 @@ sub build {
 	return;
 }
 
+sub rebuild {
+	reset_stamp();
+	build();
+}
+
 ############################################################
 #################### END: Build process ####################
 ############################################################
@@ -452,6 +518,7 @@ sub build {
 
 my $arg = (@ARGV < 1) ? "" : $ARGV[0];
 ($arg eq 'build') ? build :
+($arg eq 'rebuild') ? rebuild :
 ($arg eq 'run') ? run :
 ($arg eq 'clean') ? clean :
 build;
@@ -672,12 +739,14 @@ sub find_lib_search {
 
 sub index_src_files {
 	if ($src_index != 0) {
-		find(\&index_src_files_handle, 'src');
+		foreach my $dir (@src_dirs) {
+			find(\&index_src_files_handle, "$dir");
+		}
 	}
 }
 
 sub index_src_files_handle {
-	if ($_ =~ /.cpp/ or $_ =~ /.c/) {
+	if ($_ =~ /\.cpp/ or $_ =~ /\.c/) {
 		my $r_path = File::Spec->abs2rel($File::Find::name, 'src');
 		push @src_files, $r_path;
 	}
