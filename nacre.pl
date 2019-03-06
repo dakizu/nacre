@@ -113,15 +113,15 @@ sub get_mtime {
 }
 
 sub file_new_mod {
-	if (get_mtime($_[0]) > get_mtime($script_path)) {
+	if (get_mtime($_[0]) > get_mtime('./build/meta/stamp')) {
 		return 1;
 	} else {
 		return 0;
 	}
 }
 
-sub touch_script {
-	system("touch $script_path");
+sub touch_stamp {
+	system "touch ./build/meta/stamp"
 }
 
 sub touch_file {
@@ -160,7 +160,7 @@ sub clean {
 	{
 	print $color{'success'}, "Project already clean!\n", RESET;
 	}
-	mkdir 'build';
+	#mkdir 'build';
 	return;
 }
 
@@ -214,6 +214,7 @@ sub build {
 	unless (-d "./build/obj") { mkdir "./build/obj"; }
 	unless (-d "./build/meta") { mkdir "./build/meta"; }
 	unless (-d "./build/pchi") { mkdir "./build/pchi"; }
+	unless (-f "./build/meta/stamp") { system "touch ./build/meta/stamp"; }
 
 	print @head, $color{'body'}, " Building project...\n", RESET;
 
@@ -436,6 +437,8 @@ sub build {
 
 	print @head, $color{'success'}, " Building completed!\n", RESET;
 
+	touch_stamp();
+
 	return;
 }
 
@@ -452,8 +455,6 @@ my $arg = (@ARGV < 1) ? "" : $ARGV[0];
 ($arg eq 'run') ? run :
 ($arg eq 'clean') ? clean :
 build;
-
-touch_script();
 
 ############################################################
 #################### END: Program entry ####################
