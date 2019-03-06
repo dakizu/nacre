@@ -17,6 +17,7 @@ use File::Basename; # path generation (used for gcc pch)
 use JSON::MaybeXS ':all'; # json conversion (used for compilation database generation)
 use Cwd qw(cwd); # get execution directory (used for compilation database generation)
 use Config; # get machine configuration (used for architecture detection)
+use FindBin qw($RealScript $RealBin);
 
 ###########################################################
 #################### END: Dependencies ####################
@@ -84,6 +85,7 @@ require "./$conf_file"; # user config file
 my $std_flag_cc = '';
 my $std_flag_cxx = '';
 my @obj_files;
+my $script_path = "$RealBin/$RealScript";
 
 ###############################################################
 #################### END: Global variables ####################
@@ -96,6 +98,26 @@ my @obj_files;
 sub create_path {
 	my $dir = dirname("$_[0]");
 	make_path ($dir);
+}
+
+sub get_mtime {
+	return `stat $_[0] -c "%Z"`;
+}
+
+sub file_new_mod {
+	if (get_mtime($_[0]) > get_mtime($script_path)) {
+		return 1;
+	} else {
+		return 0;
+	}
+}
+
+sub touch_script {
+	system("touch $script_path");
+}
+
+sub touch_file {
+	system("touch $_");
 }
 
 ###############################################################
@@ -249,9 +271,16 @@ sub build {
 			# freeze header precompilation if in frozen list?
 			print @head_pch, $color{'body'}, " $input -> $output", RESET;
 
-			if (-f $output) {
-				print $color{'special'}, " (good)\n", RESET;
-				next;
+			#if (-f $output) {
+			#	print $color{'special'}, " (good)\n", RESET;
+			#	next;
+			#}
+
+			if (file_new_mod($input) == 0) {
+				if (-f $output ) {
+					print $color{'special'}, " (good)\n", RESET;
+					next;
+				}
 			}
 
 			create_path "$output";
@@ -315,10 +344,20 @@ sub build {
 		my $in_build_str = "$comp $std_flag $include_str @flags @flags_compiler -c -o $final $file";
 		$in_build_str =~ s.\n. .g;
 		
+		if (file_new_mod($file) == 0) {
+			if (-f $final ) {
+				print @head_comp, $color{'body'}, " $file -> $final", $color{'special'}, " (good)\n", RESET;
+				compdb_add ($in_build_str);
+				push @obj_files, $final;
+				next;
+			}
+		}
+
 		if ($frozen == 1) {
 			if (-f $final ) {
 				print @head_comp, $color{'body'}, " $file -> $final", $color{'special'}, " (frozen)\n", RESET;
 				compdb_add ($in_build_str);
+				push @obj_files, $final;
 				next;
 			}
 		}
@@ -393,6 +432,8 @@ my $arg = (@ARGV < 1) ? "" : $ARGV[0];
 ($arg eq 'run') ? run :
 ($arg eq 'clean') ? clean :
 build;
+
+touch_script();
 
 ############################################################
 #################### END: Program entry ####################
@@ -582,6 +623,9 @@ sub find_lib_search {
 		require $f_file;
 	}
 	#print "\n\n" + scalar @f_req + "\n\n";
+
+	# TODO: execute f_dep dependency code here
+
 	if (scalar @f_req != 0) {
 		foreach (@f_req) {
 			find_lib_search($_);
@@ -589,8 +633,6 @@ sub find_lib_search {
 	}
 
 	print $color{head}, "(find) ", $color{special}, "Finding $f_file_name...";
-	
-	# TODO: execute f_dep dependency code here
 	
 	push @flags, @f_flags;
 	push @flags_compiler, @f_flags_compiler;
@@ -602,4 +644,3 @@ sub find_lib_search {
 ##################################################################
 #################### END: Find library system ####################
 ##################################################################
-
