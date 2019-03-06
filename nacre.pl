@@ -14,6 +14,8 @@ use Term::ANSIColor qw(:constants); # output colors
 use File::Path;
 use File::Path qw/make_path/; # path generation (used for gcc pch)
 use File::Basename; # path generation (used for gcc pch)
+use File::Find;
+use File::Spec;
 use JSON::MaybeXS ':all'; # json conversion (used for compilation database generation)
 use Cwd qw(cwd); # get execution directory (used for compilation database generation)
 use Config; # get machine configuration (used for architecture detection)
@@ -63,6 +65,7 @@ our $CC = 'gcc'; # the C compiler
 our $CXX = 'g++'; # the C++ compiler (this will also be used for linking)
 our $dlink = 0; # flag that enables linking all dynamic library files in bin folder to the exec at runtime (only supports linux environments)
 our $compdb = 0; # flag that enables the generation of a compilation database (compile_commands.json)
+our $src_index = 2; # automatically index source files
 our %dep; # platform and architecture dependent code
 our %std; # a map of standards to use for C and C++ compilation
 our %color; # colors to use for build system output
@@ -72,7 +75,12 @@ $color{'success'} = BRIGHT_GREEN;
 $color{'failure'} = BRIGHT_RED;
 $color{'special'} = BRIGHT_CYAN;
 
+
 require "./$conf_file"; # user config file
+
+if (scalar @src_files != 0 and $src_index == 2) {
+	$src_index = 0;
+}
 
 ###############################################################
 #################### END: Config variables ####################
@@ -118,6 +126,15 @@ sub touch_script {
 
 sub touch_file {
 	system("touch $_");
+}
+
+sub unique_arr {
+	my %unique = ();
+	foreach my $item (@_) {
+		$unique{$item}++;
+	}
+	my @result = keys %unique;
+	return @result;
 }
 
 ###############################################################
@@ -201,8 +218,6 @@ sub build {
 	print @head, $color{'body'}, " Building project...\n", RESET;
 
 	my @head_custom = ($color{'head'}, "($conf_file)", RESET);
-
-	find_lib();
 	
 	keys %dep;
 	while(my($k, $v) = each %dep) {
@@ -232,6 +247,11 @@ sub build {
 	    }
 	}
 
+	find_lib();
+
+	index_src_files();
+
+	@src_files = unique_arr(@src_files);
 
 	if (scalar @pch != 0) {
 	    unshift @include, "./build/pchi"; # DO NOT INCLUDE THIS IN compile_commands.json
@@ -644,3 +664,24 @@ sub find_lib_search {
 ##################################################################
 #################### END: Find library system ####################
 ##################################################################
+
+#####################################################################
+#################### START: Source file indexing ####################
+#####################################################################
+
+sub index_src_files {
+	if ($src_index != 0) {
+		find(\&index_src_files_handle, 'src');
+	}
+}
+
+sub index_src_files_handle {
+	if ($_ =~ /.cpp/ or $_ =~ /.c/) {
+		my $r_path = File::Spec->abs2rel($File::Find::name, 'src');
+		push @src_files, $r_path;
+	}
+}
+
+###################################################################
+#################### END: Source file indexing ####################
+###################################################################
